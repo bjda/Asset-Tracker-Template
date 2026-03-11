@@ -53,6 +53,9 @@ enum location_msg_type {
 	 */
 	LOCATION_GNSS_DATA,
 
+	/* Location module is ready to use */
+	LOCATION_READY,
+
 	/* Input message types */
 
 	/* Request to initiate a location search operation. This will start the configured
