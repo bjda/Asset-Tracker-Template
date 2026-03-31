@@ -25,74 +25,48 @@ state RUNNING {
     [*] --> DISCONNECTED
 
     DISCONNECTED : entry / running_history = STATE_DISCONNECTED;
-    DISCONNECTED ----> CONNECTED : CLOUD_CONNECTED
+    DISCONNECTED --> CONNECTED : CLOUD_CONNECTED
     DISCONNECTED : TIMER_EXPIRED_CLOUD / \n\t timer_send_data_start(update_interval_sec);\n\t sync_start_time = k_uptime_seconds();
     DISCONNECTED : BUTTON_PRESS_LONG / ;
     DISCONNECTED : STORAGE_THRESHOLD_REACHED / ;
     state DISCONNECTED {
         [*] --> DISCONNECTED_WAITING
 
-        ' Modeling DISCONNECTED_SAMPLING entry as composite to handle how sampling_begin_common can transition to a different state
-        state DISCONNECTED_SAMPLING_ENTRY as "DISCONNECTED_SAMPLING (entry)" {
-            [*] --> c1
-            c1 --> DISCONNECTED_WAITING : [(sample_start_time > 0)\n&& (k_uptime_seconds() - sample_start_time \n\t< sample_interval_sec)\n&& (state_object->chan != &button_chan)]
-            c1 --> DISCONNECTED_SAMPLING : [else]
-            state c1 <<choice>>
+        DISCONNECTED_SAMPLING : entry / \n\t publish LED_RGB_SET(blink blue 10 times) \n\t sample_start_time = k_uptime_seconds(); \n\t publish POWER_BATTERY_PERCENTAGE_SAMPLE_REQUEST [CONFIG_APP_POWER] \n\t publish ENVIRONMENTAL_SENSOR_SAMPLE_REQUEST [CONFIG_APP_ENVIRONMENTAL] \n\t publish LOCATION_SEARCH_TRIGGER
+        DISCONNECTED_SAMPLING --> DISCONNECTED_WAITING : LOCATION_SEARCH_DONE
+        DISCONNECTED_SAMPLING : BUTTON_PRESS_SHORT / ;
+        state DISCONNECTED_SAMPLING
 
-            DISCONNECTED_SAMPLING : entry / \n\t publish LED_RGB_SET(blink blue 10 times) \n\t sample_start_time = k_uptime_seconds(); \n\t publish LOCATION_SEARCH_TRIGGER
-            DISCONNECTED_SAMPLING --> DISCONNECTED_WAITING : LOCATION_SEARCH_DONE / sensor_triggers_send();
-            DISCONNECTED_SAMPLING : BUTTON_PRESS_SHORT / ;
-            state DISCONNECTED_SAMPLING
-        }
         DISCONNECTED_WAITING : entry / \n\t waiting_entry_common(); (schedule next sample/cloud sync) \n\t publish LED_RGB_SET(blink red 10 times)
         DISCONNECTED_WAITING : exit / timer_sample_stop();
-        DISCONNECTED_WAITING --> DISCONNECTED_SAMPLING_ENTRY : TIMER_EXPIRED_SAMPLE_DATA
+        DISCONNECTED_WAITING --> DISCONNECTED_SAMPLING : TIMER_EXPIRED_SAMPLE_DATA
         DISCONNECTED_WAITING -u-> DISCONNECTED_WAITING : TIMER_CONFIG_CHANGED
-        DISCONNECTED_WAITING --> DISCONNECTED_SAMPLING_ENTRY : BUTTON_PRESS_SHORT
+        DISCONNECTED_WAITING --> DISCONNECTED_SAMPLING : BUTTON_PRESS_SHORT
         state DISCONNECTED_WAITING
     }
 
     CONNECTED : entry [cloud_synced_on_connect == false] / \n\t running_history = STATE_CONNECTED; \n\t publish CLOUD_SHADOW_UPDATE_REPORTED_DEVICE \n\t publish FOTA_POLL_REQUEST \n\t publish CLOUD_SHADOW_GET_DESIRED \n\t cloud_synced_on_connect = true;
     CONNECTED : entry [else] / \n\t running_history = STATE_CONNECTED;
-    CONNECTED ----> DISCONNECTED : CLOUD_DISCONNECTED
+    CONNECTED --> DISCONNECTED : CLOUD_DISCONNECTED
     CONNECTED : CLOUD_SHADOW_RESPONSE_DESIRED \n|| CLOUD_SHADOW_RESPONSE_DELTA \n|| CLOUD_SHADOW_RESPONSE_EMPTY_DELTA \n|| CLOUD_SHADOW_RESPONSE_EMPTY_DESIRED / \n\t handle_cloud_shadow_response();
-    CONNECTED_x1 ---u-> CONNECTED_SENDING : TIMER_EXPIRED_CLOUD
-    CONNECTED_x2 ---u-> CONNECTED_SENDING : BUTTON_PRESS_LONG
+    CONNECTED_x1 -> CONNECTED_SENDING : TIMER_EXPIRED_CLOUD \n|| BUTTON_PRESS_LONG \n|| STORAGE_THRESHOLD_REACHED
     state CONNECTED {
         state CONNECTED_x1 <<exitPoint>>
-        state CONNECTED_x2 <<exitPoint>>
-        [*] -l-> CONNECTED_SENDING
+        [*] --> CONNECTED_SENDING
 
-        ' Modeling CONNECTED_SAMPLING entry as composite to handle how sampling_begin_common can transition to a different state
-        state CONNECTED_SAMPLING_ENTRY as "CONNECTED_SAMPLING (entry)" {
-            [*] --> c2
-            state c2 <<choice>>
-            c2 --> CONNECTED_WAITING : [(sample_start_time > 0)\n&& (k_uptime_seconds() - sample_start_time \n\t< sample_interval_sec)\n&& (state_object->chan != &button_chan)]
-            c2 --> CONNECTED_SAMPLING : [else]
-
-            CONNECTED_SAMPLING : entry / \n\t publish LED_RGB_SET(blink blue 10 times) \n\t sample_start_time = k_uptime_seconds(); \n\t publish LOCATION_SEARCH_TRIGGER
-            CONNECTED_SAMPLING --> c3 : LOCATION_SEARCH_DONE / sensor_triggers_send();
-            state c3 <<choice>>
-            c3 --> CONNECTED_SENDING : [SMF_CTX->previous == STATE_CONNECTED_SENDING]
-            c3 --> CONNECTED_WAITING : [else]
-            CONNECTED_SAMPLING : BUTTON_PRESS_SHORT / ;
-            CONNECTED_SAMPLING --> CONNECTED_SENDING : STORAGE_THRESHOLD_REACHED
-            state CONNECTED_SAMPLING
-        }
+        CONNECTED_SAMPLING : entry / \n\t publish LED_RGB_SET(blink blue 10 times) \n\t sample_start_time = k_uptime_seconds(); \n\t publish POWER_BATTERY_PERCENTAGE_SAMPLE_REQUEST [CONFIG_APP_POWER] \n\t publish ENVIRONMENTAL_SENSOR_SAMPLE_REQUEST [CONFIG_APP_ENVIRONMENTAL] \n\t publish LOCATION_SEARCH_TRIGGER
+        CONNECTED_SAMPLING --> CONNECTED_WAITING : LOCATION_SEARCH_DONE
+        CONNECTED_SAMPLING : BUTTON_PRESS_SHORT / ;
+        CONNECTED_SAMPLING : STORAGE_THRESHOLD_REACHED / ;
+        state CONNECTED_SAMPLING
 
         CONNECTED_WAITING : entry / waiting_entry_common(); (schedule next sample/cloud sync)
         CONNECTED_WAITING : exit / timer_sample_stop();
-        CONNECTED_WAITING --> CONNECTED_SAMPLING_ENTRY : TIMER_EXPIRED_SAMPLE_DATA
+        CONNECTED_WAITING --> CONNECTED_SAMPLING : TIMER_EXPIRED_SAMPLE_DATA \n|| BUTTON_PRESS_SHORT
         CONNECTED_WAITING -u-> CONNECTED_WAITING : TIMER_CONFIG_CHANGED
-        CONNECTED_WAITING --> CONNECTED_SAMPLING_ENTRY : BUTTON_PRESS_SHORT
-        CONNECTED_WAITING --> CONNECTED_SENDING : STORAGE_THRESHOLD_REACHED
         state CONNECTED_WAITING
 
         CONNECTED_SENDING : entry / \n\t cloud_send_now(); (Send stored data now, poll cloud/FOTA, and restart cloud send timer) \n\t publish LED_RGB_SET(blink green 10 times)
-        CONNECTED_SENDING --> CONNECTED_SAMPLING_ENTRY : TIMER_EXPIRED_SAMPLE_DATA
-        CONNECTED_SENDING : TIMER_EXPIRED_CLOUD / ;
-        CONNECTED_SENDING --> CONNECTED_SAMPLING_ENTRY : BUTTON_PRESS_SHORT
-        CONNECTED_SENDING : BUTTON_PRESS_LONG / ;
         CONNECTED_SENDING : STORAGE_THRESHOLD_REACHED / ;
         CONNECTED_SENDING --> CONNECTED_WAITING : STORAGE_BATCH_CLOSE
         state CONNECTED_SENDING
